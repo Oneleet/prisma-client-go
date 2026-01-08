@@ -249,9 +249,22 @@ func (e *QueryEngine) spawn(file string) error {
 		return fmt.Errorf("setup stream: %w", err)
 	}
 
+	fmt.Printf("prisma-client-go MODIFIED FOR ONELEET: creating temp file for schema...\n")
+
+	schemaTempFile, err := os.CreateTemp(os.TempDir(), "schema-*.prisma")
+	if err != nil {
+		return fmt.Errorf("creating schema temp file: %w", err)
+	}
+
+	if err := os.WriteFile(schemaTempFile.Name(), []byte(e.Schema), 0o644); err != nil {
+		return fmt.Errorf("writing schema to temp file: %w", err)
+	}
+
+	fmt.Printf("prisma-client-go MODIFIED FOR ONELEET: schema temp file created at %s\n", schemaTempFile.Name())
+
 	e.cmd.Env = append(
 		os.Environ(),
-		"PRISMA_DML="+e.Schema,
+		"PRISMA_DML_PATH="+schemaTempFile.Name(),
 		"RUST_LOG=error",
 		"RUST_LOG_FORMAT=json",
 		"PRISMA_CLIENT_ENGINE_TYPE=binary",
