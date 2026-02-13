@@ -86,6 +86,8 @@ func (e *QueryEngine) Disconnect() error {
 
 	close(e.closed)
 
+	e.http.CloseIdleConnections()
+
 	logger.Debug.Printf("disconnected.")
 	return nil
 }
@@ -307,6 +309,11 @@ func (e *QueryEngine) spawn(file string) error {
 		// return an error early if an engine error already happened
 		if e.lastEngineError != "" {
 			e.mu.Unlock()
+			if e.cmd != nil && e.cmd.Process != nil {
+				logger.Info.Printf("prisma-client-go MODIFIED FOR ONELEET: cleaning process")
+				_ = e.cmd.Process.Kill()
+				_ = e.cmd.Wait()
+			}
 			return fmt.Errorf("query engine errored: %w", fmt.Errorf(e.lastEngineError))
 		}
 		e.mu.Unlock()
@@ -342,6 +349,11 @@ func (e *QueryEngine) spawn(file string) error {
 	}
 
 	if connectErr != nil {
+		if e.cmd != nil && e.cmd.Process != nil {
+			logger.Info.Printf("prisma-client-go MODIFIED FOR ONELEET: cleaning process")
+			_ = e.cmd.Process.Kill()
+			_ = e.cmd.Wait()
+		}
 		return fmt.Errorf("readiness query error: %w", connectErr)
 	}
 
