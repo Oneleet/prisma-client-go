@@ -63,31 +63,92 @@ func (e *QueryEngine) Connect() error {
 
 func (e *QueryEngine) Disconnect() error {
 	e.mu.Lock()
+	if e.disconnected {
+		e.mu.Unlock()
+		return nil
+	}
 	e.disconnected = true
+	cmd := e.cmd
+	closed := e.closed
 	e.mu.Unlock()
-	logger.Debug.Printf("disconnecting...")
+	logger.Debug.Printf("prisma-client-go MODIFIED FOR ONELEET: disconnecting query engine...")
 
-	if platform.Name() == "windows" {
-		if err := e.cmd.Process.Kill(); err != nil {
-			return fmt.Errorf("kill process: %w", err)
-		}
+	if e.http != nil {
+		e.http.CloseIdleConnections()
+	}
+
+	if cmd == nil || cmd.Process == nil {
+		closeEngineClosed(closed)
+		logger.Debug.Printf("prisma-client-go MODIFIED FOR ONELEET: disconnected query engine with no process")
 		return nil
 	}
 
-	if err := e.cmd.Process.Signal(os.Interrupt); err != nil {
+	if platform.Name() == "windows" {
+		logger.Debug.Printf("prisma-client-go MODIFIED FOR ONELEET: killing query engine process on windows")
+		if err := cmd.Process.Kill(); err != nil {
+			return fmt.Errorf("kill process: %w", err)
+		}
+		closeEngineClosed(closed)
+		return nil
+	}
+
+	logger.Debug.Printf("prisma-client-go MODIFIED FOR ONELEET: interrupting query engine process")
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
 		return fmt.Errorf("send signal: %w", err)
 	}
 
-	if err := e.cmd.Wait(); err != nil {
-		if err.Error() != "signal: interrupt" {
-			return fmt.Errorf("wait for process: %w", err)
-		}
+	if err := waitForQueryEngineExit(cmd, 2*time.Second); err != nil {
+		return err
 	}
 
-	close(e.closed)
+	closeEngineClosed(closed)
 
-	logger.Debug.Printf("disconnected.")
+	logger.Debug.Printf("prisma-client-go MODIFIED FOR ONELEET: disconnected query engine")
 	return nil
+}
+
+func waitForQueryEngineExit(cmd *exec.Cmd, timeout time.Duration) error {
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case err := <-done:
+		return normalizeQueryEngineWaitError(err)
+	case <-time.After(timeout):
+		logger.Info.Printf("prisma-client-go MODIFIED FOR ONELEET: query engine did not exit after interrupt within %s; killing process", timeout)
+		fmt.Printf("prisma-client-go MODIFIED FOR ONELEET: query engine did not exit after interrupt within %s; killing process\n", timeout)
+		if err := cmd.Process.Kill(); err != nil {
+			return fmt.Errorf("kill process after interrupt timeout: %w", err)
+		}
+
+		select {
+		case err := <-done:
+			return normalizeQueryEngineWaitError(err)
+		case <-time.After(timeout):
+			return fmt.Errorf("wait for process after kill timed out")
+		}
+	}
+}
+
+func normalizeQueryEngineWaitError(err error) error {
+	if err == nil || err.Error() == "signal: interrupt" || err.Error() == "signal: killed" {
+		return nil
+	}
+
+	return fmt.Errorf("wait for process: %w", err)
+}
+
+func closeEngineClosed(closed chan interface{}) {
+	if closed == nil {
+		return
+	}
+
+	defer func() {
+		_ = recover()
+	}()
+	close(closed)
 }
 
 func (e *QueryEngine) ensure() (string, error) {
